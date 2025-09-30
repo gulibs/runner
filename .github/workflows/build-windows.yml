@@ -1,16 +1,16 @@
-name: Build Windows exe
+name: Build and Test Windows exe
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-test:
     runs-on: windows-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -21,21 +21,64 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+        shell: pwsh
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --noconfirm --clean ^
-            --collect-submodules sklearn ^
-            --collect-submodules pandas ^
-            --collect-submodules numpy ^
-            --collect-data sklearn ^
-            --collect-data pandas ^
-            --collect-binaries numpy ^
-            --add-data "model\\RF_binary_v1.pickle;model" ^
+          pyinstaller --onefile --noconfirm --clean `
+            --collect-submodules sklearn `
+            --collect-submodules pandas `
+            --collect-submodules numpy `
+            --collect-data sklearn `
+            --collect-data pandas `
+            --collect-binaries numpy `
+            --add-data "model\\RF_binary_v1.pickle;model" `
             model\\run.py
+        shell: pwsh
 
-      - name: Upload artifact
+      - name: List dist folder (debug)
+        run: |
+          Write-Host "Dist contents:"
+          Get-ChildItem -Recurse -Force dist | Format-Table -AutoSize
+        shell: pwsh
+
+      - name: Ensure test CSV exists
+        run: |
+          $csv = Join-Path $PWD "model\example.csv"
+          if (-not (Test-Path $csv)) {
+            Write-Error "Test CSV not found at $csv - please add model/example.csv to repo or fetch it earlier in workflow."
+            exit 1
+          }
+          Write-Host "Found test CSV: $csv"
+        shell: pwsh
+
+      - name: Run exe for test
+        run: |
+          $exe = Join-Path $PWD "dist\run.exe"
+          $csv = Join-Path $PWD "model\example.csv"
+          if (-not (Test-Path $exe)) {
+            Write-Error "Built exe not found: $exe"
+            exit 1
+          }
+          Write-Host "Running: $exe $csv"
+          # 将 stdout 重定向到文件，便于下载与排查
+          & $exe $csv > run-output.txt
+          $code = $LASTEXITCODE
+          Write-Host "Exit code: $code"
+          Write-Host "------ run-output.txt ------"
+          Get-Content run-output.txt | ForEach-Object { Write-Host $_ }
+          Write-Host "----------------------------"
+          if ($code -ne 0) {
+            Write-Error "Executable exited with code $code. See run-output.txt for details."
+            exit $code
+          }
+        shell: pwsh
+        timeout-minutes: 10
+
+      - name: Upload build & test artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: run-windows-exe
-          path: dist/run.exe
+          name: run-windows-exe-and-output
+          path: |
+            dist/run.exe
+            run-output.txt
